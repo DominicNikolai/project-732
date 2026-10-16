@@ -37,7 +37,7 @@
     PlaneGeometry,
     Scene,
     SRGBColorSpace,
-    WebGLRenderer,
+    WebGLRenderer
   } from 'three';
   import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
   import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -69,7 +69,7 @@
     edgeSmoothing: 0.897,
     groupDepth: 600,
     uploadImage: () =>
-      (document.getElementById('file-input') as HTMLInputElement).click(),
+      (document.getElementById('file-input') as HTMLInputElement).click()
   };
 
   const loadingEl = document.getElementById('loading') as HTMLDivElement;
@@ -89,7 +89,7 @@
 
     renderer = new WebGLRenderer({
       antialias: false,
-      powerPreference: 'high-performance',
+      powerPreference: 'high-performance'
     });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -118,15 +118,27 @@
     const gui = new GUI({ title: 'Scene Settings' });
 
     gui.add(params, 'speed', 0.1, 10.0).name('Movement Speed');
-    gui.add(params, 'blurAmount', 0.0, 0.99).name('Motion Blur').onChange((v: number) => {
-      afterimagePass.uniforms['damp'].value = v;
-    });
+    gui
+      .add(params, 'blurAmount', 0.0, 0.99)
+      .name('Motion Blur')
+      .onChange((v: number) => {
+        afterimagePass.uniforms['damp'].value = v;
+      });
     gui.add(params, 'fadeStartDistance', -1500, 0).name('Fade Out Distance');
 
     const visualFolder = gui.addFolder('Visual Quality');
-    visualFolder.add(params, 'layers', 3, 16, 1).name('Total Layers').onFinishChange(reprocessImage);
-    visualFolder.add(params, 'staticDarkLayers', 0, 10, 1).name('Static Dark Layers').onFinishChange(buildScene);
-    visualFolder.add(params, 'edgeSmoothing', 0.0, 1.0).name('Edge Smoothing').onFinishChange(reprocessImage);
+    visualFolder
+      .add(params, 'layers', 3, 16, 1)
+      .name('Total Layers')
+      .onFinishChange(reprocessImage);
+    visualFolder
+      .add(params, 'staticDarkLayers', 0, 10, 1)
+      .name('Static Dark Layers')
+      .onFinishChange(buildScene);
+    visualFolder
+      .add(params, 'edgeSmoothing', 0.0, 1.0)
+      .name('Edge Smoothing')
+      .onFinishChange(reprocessImage);
 
     gui.add(params, 'uploadImage').name('Upload Custom Image');
   }
@@ -184,7 +196,7 @@
   function processImageIntoLayers(img: HTMLImageElement) {
     currentImageAspect = img.width / img.height;
 
-    currentTextures.forEach((tex) => tex.dispose());
+    currentTextures.forEach(tex => tex.dispose());
     currentTextures = [];
 
     const canvas = document.createElement('canvas');
@@ -200,7 +212,7 @@
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d', {
-      willReadFrequently: true,
+      willReadFrequently: true
     }) as CanvasRenderingContext2D;
     ctx.drawImage(img, 0, 0, w, h);
 
@@ -281,7 +293,7 @@
   }
 
   function buildScene() {
-    movingMeshes.forEach((mesh) => scene.remove(mesh));
+    movingMeshes.forEach(mesh => scene.remove(mesh));
     movingMeshes = [];
     if (baseMesh) scene.remove(baseMesh);
 
@@ -291,7 +303,7 @@
       map: baseTexture,
       depthWrite: false,
       transparent: true,
-      opacity: 0.0,
+      opacity: 0.0
     });
     baseMesh = new Mesh(geometry, baseMat);
     baseMesh.position.z = -params.groupDepth * 3;
@@ -307,7 +319,7 @@
           transparent: true,
           side: DoubleSide,
           depthWrite: false,
-          opacity: 0.0,
+          opacity: 0.0
         });
 
         const mesh = new Mesh(geometry, material);
@@ -340,14 +352,12 @@
     const visibleWidth = visibleHeight * screenAspect;
 
     if (baseMesh) baseMesh.scale.set(visibleWidth, visibleHeight, 1);
-    movingMeshes.forEach((mesh) =>
-      mesh.scale.set(visibleWidth, visibleHeight, 1)
-    );
+    movingMeshes.forEach(mesh => mesh.scale.set(visibleWidth, visibleHeight, 1));
 
     const texturesToUpdate = [...currentTextures];
     if (baseTexture) texturesToUpdate.push(baseTexture);
 
-    texturesToUpdate.forEach((tex) => {
+    texturesToUpdate.forEach(tex => {
       let scaleX = 1;
       let scaleY = 1;
 
@@ -387,7 +397,7 @@
     const spawnZ = maxVisibleZ - loopDepth;
     const fadeInDistance = params.groupDepth * 0.8;
 
-    movingMeshes.forEach((mesh) => {
+    movingMeshes.forEach(mesh => {
       if (mesh.userData.isStatic) {
         mesh.material.opacity = startupFade;
         return;
