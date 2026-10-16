@@ -1,0 +1,421 @@
+<div id='loading'>Processing Layers...</div>
+<input type='file' id='file-input' accept='image/*' style='display: none;' />
+
+<style is:global>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #000;
+    font-family: sans-serif;
+  }
+
+  canvas {
+    display: block;
+  }
+
+  #loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 16px;
+    pointer-events: none;
+    display: none;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    z-index: 10;
+  }
+</style>
+
+<script>
+  import {
+    CanvasTexture,
+    DoubleSide,
+    Mesh,
+    MeshBasicMaterial,
+    PerspectiveCamera,
+    PlaneGeometry,
+    Scene,
+    SRGBColorSpace,
+    WebGLRenderer,
+  } from 'three';
+  import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+  import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+  import GUI from 'lil-gui';
+  import { baseUrl } from '@/utils/functions';
+
+  type LayerMesh = Mesh<PlaneGeometry, MeshBasicMaterial>;
+
+  let camera: PerspectiveCamera;
+  let scene: Scene;
+  let renderer: WebGLRenderer;
+  let composer: EffectComposer;
+  let afterimagePass: AfterimagePass;
+  let movingMeshes: LayerMesh[] = [];
+  let baseMesh: LayerMesh | null = null;
+  let baseTexture: CanvasTexture | null = null;
+  let currentTextures: CanvasTexture[] = [];
+  let currentImageAspect = 1;
+  let currentImgObj: HTMLImageElement | null = null;
+  let startupFade = 0.0;
+
+  const params = {
+    speed: 2.0,
+    blurAmount: 0.93654,
+    fadeStartDistance: -902,
+    layers: 5,
+    staticDarkLayers: 1,
+    edgeSmoothing: 0.897,
+    groupDepth: 600,
+    uploadImage: () =>
+      (document.getElementById('file-input') as HTMLInputElement).click(),
+  };
+
+  const loadingEl = document.getElementById('loading') as HTMLDivElement;
+
+  init();
+  animate();
+
+  function init() {
+    scene = new Scene();
+    camera = new PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      3000
+    );
+    camera.position.z = 0;
+
+    renderer = new WebGLRenderer({
+      antialias: false,
+      powerPreference: 'high-performance',
+    });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    afterimagePass = new AfterimagePass();
+    afterimagePass.uniforms['damp'].value = params.blurAmount;
+    composer.addPass(afterimagePass);
+
+    setupGUI();
+
+    window.addEventListener('resize', onWindowResize);
+    (document.getElementById('file-input') as HTMLInputElement).addEventListener(
+      'change',
+      handleFileUpload
+    );
+
+    loadDefaultImage();
+  }
+
+  function setupGUI() {
+    const gui = new GUI({ title: 'Scene Settings' });
+
+    gui.add(params, 'speed', 0.1, 10.0).name('Movement Speed');
+    gui.add(params, 'blurAmount', 0.0, 0.99).name('Motion Blur').onChange((v: number) => {
+      afterimagePass.uniforms['damp'].value = v;
+    });
+    gui.add(params, 'fadeStartDistance', -1500, 0).name('Fade Out Distance');
+
+    const visualFolder = gui.addFolder('Visual Quality');
+    visualFolder.add(params, 'layers', 3, 16, 1).name('Total Layers').onFinishChange(reprocessImage);
+    visualFolder.add(params, 'staticDarkLayers', 0, 10, 1).name('Static Dark Layers').onFinishChange(buildScene);
+    visualFolder.add(params, 'edgeSmoothing', 0.0, 1.0).name('Edge Smoothing').onFinishChange(reprocessImage);
+
+    gui.add(params, 'uploadImage').name('Upload Custom Image');
+  }
+
+  function loadDefaultImage() {
+    loadingEl.style.display = 'block';
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+
+    img.onload = () => {
+      currentImgObj = img;
+      processImageIntoLayers(img);
+      loadingEl.style.display = 'none';
+    };
+
+    img.onerror = () => {
+      console.error('Failed to load default image. CORS issue?');
+      loadingEl.innerText = 'Error loading image';
+    };
+
+    img.src = baseUrl('/assets/layers.jpg');
+  }
+
+  function handleFileUpload(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+
+    loadingEl.style.display = 'block';
+
+    const reader = new FileReader();
+    reader.onload = (event: ProgressEvent<FileReader>) => {
+      const img = new Image();
+      img.onload = () => {
+        currentImgObj = img;
+        setTimeout(() => {
+          processImageIntoLayers(img);
+          loadingEl.style.display = 'none';
+        }, 50);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function reprocessImage() {
+    if (currentImgObj) {
+      loadingEl.style.display = 'block';
+      setTimeout(() => {
+        processImageIntoLayers(currentImgObj as HTMLImageElement);
+        loadingEl.style.display = 'none';
+      }, 50);
+    }
+  }
+
+  function processImageIntoLayers(img: HTMLImageElement) {
+    currentImageAspect = img.width / img.height;
+
+    currentTextures.forEach((tex) => tex.dispose());
+    currentTextures = [];
+
+    const canvas = document.createElement('canvas');
+    const maxSize = 1024;
+    let w = img.width;
+    let h = img.height;
+    if (w > maxSize || h > maxSize) {
+      const ratio = Math.min(maxSize / w, maxSize / h);
+      w = Math.floor(w * ratio);
+      h = Math.floor(h * ratio);
+    }
+
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', {
+      willReadFrequently: true,
+    }) as CanvasRenderingContext2D;
+    ctx.drawImage(img, 0, 0, w, h);
+
+    if (baseTexture) baseTexture.dispose();
+    baseTexture = new CanvasTexture(canvas);
+    baseTexture.colorSpace = SRGBColorSpace;
+    baseTexture.matrixAutoUpdate = false;
+
+    const baseData = ctx.getImageData(0, 0, w, h);
+    const totalPixels = baseData.data.length;
+
+    const numLayers = params.layers;
+
+    const steppedXArray = new Float32Array(256);
+    const edgeWidth = params.edgeSmoothing;
+    const minEdge = 0.5 - edgeWidth / 2;
+    const maxEdge = 0.5 + edgeWidth / 2;
+
+    for (let l = 0; l < 256; l++) {
+      const x = (l / 255) * (numLayers - 1);
+      const floorX = Math.floor(x);
+      const f = x - floorX;
+
+      let smoothedF = f;
+      if (edgeWidth < 1.0) {
+        if (edgeWidth <= 0.001) {
+          smoothedF = f < 0.5 ? 0.0 : 1.0;
+        } else if (f <= minEdge) {
+          smoothedF = 0.0;
+        } else if (f >= maxEdge) {
+          smoothedF = 1.0;
+        } else {
+          const t = (f - minEdge) / (maxEdge - minEdge);
+          smoothedF = t * t * (3 - 2 * t);
+        }
+      }
+      steppedXArray[l] = floorX + smoothedF;
+    }
+
+    for (let i = 0; i < numLayers; i++) {
+      const lCanvas = document.createElement('canvas');
+      lCanvas.width = w;
+      lCanvas.height = h;
+      const lCtx = lCanvas.getContext('2d') as CanvasRenderingContext2D;
+      const lData = lCtx.createImageData(w, h);
+
+      for (let j = 0; j < totalPixels; j += 4) {
+        const r = baseData.data[j];
+        const g = baseData.data[j + 1];
+        const b = baseData.data[j + 2];
+        const a = baseData.data[j + 3];
+
+        const luma = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        const clampedLuma = Math.max(0, Math.min(255, luma));
+
+        const steppedX = steppedXArray[clampedLuma];
+
+        const weight = Math.max(0, 1.0 - Math.abs(steppedX - i));
+
+        if (weight > 0) {
+          lData.data[j] = r;
+          lData.data[j + 1] = g;
+          lData.data[j + 2] = b;
+          lData.data[j + 3] = a * weight;
+        }
+      }
+
+      lCtx.putImageData(lData, 0, 0);
+      const tex = new CanvasTexture(lCanvas);
+      tex.colorSpace = SRGBColorSpace;
+      tex.matrixAutoUpdate = false;
+
+      currentTextures.push(tex);
+    }
+
+    startupFade = 0.0;
+    buildScene();
+  }
+
+  function buildScene() {
+    movingMeshes.forEach((mesh) => scene.remove(mesh));
+    movingMeshes = [];
+    if (baseMesh) scene.remove(baseMesh);
+
+    const geometry = new PlaneGeometry(1, 1);
+
+    const baseMat = new MeshBasicMaterial({
+      map: baseTexture,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.0,
+    });
+    baseMesh = new Mesh(geometry, baseMat);
+    baseMesh.position.z = -params.groupDepth * 3;
+    scene.add(baseMesh);
+
+    currentTextures.forEach((tex, i) => {
+      const isStatic = i < params.staticDarkLayers;
+      const instanceCount = isStatic ? 1 : 3;
+
+      for (let g = 0; g < instanceCount; g++) {
+        const material = new MeshBasicMaterial({
+          map: tex,
+          transparent: true,
+          side: DoubleSide,
+          depthWrite: false,
+          opacity: 0.0,
+        });
+
+        const mesh = new Mesh(geometry, material);
+
+        if (isStatic) {
+          mesh.position.z = -params.groupDepth * 2.5 + i * 10;
+          mesh.userData = { isStatic: true };
+        } else {
+          const depthRatio = 1.0 - i / currentTextures.length;
+          const localZ = -depthRatio * params.groupDepth;
+          const groupZ = -g * params.groupDepth;
+          mesh.position.z = localZ + groupZ;
+          mesh.userData = { isStatic: false };
+        }
+
+        scene.add(mesh);
+        movingMeshes.push(mesh);
+      }
+    });
+
+    updateCoverUVs();
+  }
+
+  function updateCoverUVs() {
+    const screenAspect = window.innerWidth / window.innerHeight;
+
+    const backgroundDepth = Math.abs(-params.groupDepth * 3);
+    const vFOV = (camera.fov * Math.PI) / 180;
+    const visibleHeight = 2 * Math.tan(vFOV / 2) * backgroundDepth;
+    const visibleWidth = visibleHeight * screenAspect;
+
+    if (baseMesh) baseMesh.scale.set(visibleWidth, visibleHeight, 1);
+    movingMeshes.forEach((mesh) =>
+      mesh.scale.set(visibleWidth, visibleHeight, 1)
+    );
+
+    const texturesToUpdate = [...currentTextures];
+    if (baseTexture) texturesToUpdate.push(baseTexture);
+
+    texturesToUpdate.forEach((tex) => {
+      let scaleX = 1;
+      let scaleY = 1;
+
+      if (screenAspect > currentImageAspect) {
+        scaleY = currentImageAspect / screenAspect;
+      } else {
+        scaleX = screenAspect / currentImageAspect;
+      }
+
+      tex.matrix.setUvTransform(0.0, 0.0, scaleX, scaleY, 0, 0.5, 0.5);
+    });
+  }
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+    updateCoverUVs();
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    if (startupFade < 1.0) {
+      startupFade += 0.01;
+      if (startupFade > 1.0) startupFade = 1.0;
+    }
+
+    if (baseMesh) {
+      baseMesh.material.opacity = startupFade;
+    }
+
+    const loopDepth = params.groupDepth * 3;
+    const maxVisibleZ = 100;
+
+    const spawnZ = maxVisibleZ - loopDepth;
+    const fadeInDistance = params.groupDepth * 0.8;
+
+    movingMeshes.forEach((mesh) => {
+      if (mesh.userData.isStatic) {
+        mesh.material.opacity = startupFade;
+        return;
+      }
+
+      mesh.position.z += params.speed;
+
+      let targetOpacity = 1.0;
+
+      if (mesh.position.z > params.fadeStartDistance) {
+        const fadeSpan = maxVisibleZ - params.fadeStartDistance;
+        targetOpacity =
+          1.0 - (mesh.position.z - params.fadeStartDistance) / fadeSpan;
+      }
+
+      if (mesh.position.z < spawnZ + fadeInDistance) {
+        const spawnOpacity = (mesh.position.z - spawnZ) / fadeInDistance;
+        targetOpacity = Math.min(targetOpacity, spawnOpacity);
+      }
+
+      mesh.material.opacity =
+        Math.max(0, Math.min(1, targetOpacity)) * startupFade;
+
+      if (mesh.position.z > maxVisibleZ) {
+        mesh.position.z -= loopDepth;
+      }
+    });
+
+    composer.render();
+  }
+</script>

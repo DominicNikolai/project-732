@@ -1,0 +1,63 @@
+*,
+*::after,
+*::before {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+a,
+button,
+img {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+:root {
+  --gradient-btn: linear-gradient(
+    to bottom,
+    #00f,
+    black
+  );
+}
+
+button {
+  background-color: transparent;
+  border: none;
+  outline: none;
+}
+
+body {
+  min-height: 100vh;
+  height: max-content;
+  width: 100%;
+  flex-direction: column;
+}
+
+
+
+body {
+  --sb-track-color: #000;
+  --sb-thumb-color: var(--gradient-btn);
+  --sb-size: 0.7vmax;
+}
+
+/***************************SCROLL***************************/
+
+body::-webkit-scrollbar {
+  width: var(--sb-size);
+}
+
+body::-webkit-scrollbar-track {
+  background: var(--sb-track-color);
+}
+
+body::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb-color);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  body {
+    scrollbar-color: var(--sb-thumb-color) var(--sb-track-color);
+  }
+}
