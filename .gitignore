@@ -1,6 +1,7 @@
 # build output
 dist/
 .opencode/
+.opencode/*
 AGENTS.md
 
 # generated types
